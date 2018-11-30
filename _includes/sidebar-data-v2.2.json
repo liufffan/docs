@@ -169,6 +169,23 @@
             ]
           },
           {
+            "title": "Security",
+            "items": [
+              {
+                "title": "Overview",
+                "urls": [
+                  "/${VERSION}/security-overview.html"
+                ]
+              },
+              {
+                "title": "How digital certificates work with CockroachDB",
+                "urls": [
+                  "/${VERSION}/how-digital-certificates-work-with-CockroachDB.html"
+                ]
+              }
+            ]
+          },
+          {
            "title": "Third-Party Database Tools",
             "urls": [
                 "/${VERSION}/third-party-database-tools.html"
