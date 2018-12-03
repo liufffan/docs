@@ -52,7 +52,7 @@ Create a certificate and key for the `maxroach` user by running the following co
 $ cockroach cert create-client maxroach --certs-dir=certs --ca-key=my-safe-directory/ca.key
 ~~~
 
-## Step 3. Run the Python code
+## Step 4. Run the Python code
 
 The code below uses the [SQLAlchemy ORM](https://docs.sqlalchemy.org/en/latest/) to map Python objects and methods to SQL operations.  Specifically, it:
 
@@ -62,28 +62,13 @@ The code below uses the [SQLAlchemy ORM](https://docs.sqlalchemy.org/en/latest/)
 
 You can run this script as many times as you want; on each run, it will create some new accounts and shuffle some money around between accounts.  (This is why Step 1 needs to check for existing account IDs to avoid collisions.)
 
-It does all of the above using the recommended practices for using SQLAlchemy with the CockroachDB dialect, which are listed below:
-
-- **DO** use the [`cockroachdb.sqlalchemy.run_transaction`](https://github.com/cockroachdb/cockroachdb-python/blob/master/cockroachdb/sqlalchemy/transaction.py) method defined by the dialect, which abstracts the details of [transaction retries](transactions.html#transaction-retries) away from you having to care about them (too much). Note that there are more frequent retries in CockroachDB than in databases that do not offer the ANSI [SERIALIZABLE](XXX) isolation level.  This is because XXX
-
-- **DO** follow the recommendation of the [SQLAlchemy FAQs](https://docs.sqlalchemy.org/en/latest/orm/session_basics.html#session-frequently-asked-questions), which affirm the previous point by stating (among other things) that
-    > As a general rule, the application should manage the lifecycle of the session externally to functions that deal with specific data. This is a fundamental separation of concerns which keeps data-specific operations agnostic of the context in which they access and manipulate that data ... keep the lifecycle of the session (and usually the transaction) separate and external
-
-- **DON'T** do any explicit munging of the transaction state inside the callback function passed to `run_transaction`
-
-- **DON'T** make calls to [`Session.flush()`][session.flush] inside `run_transaction`.  This does not work as expected with CockroachDB because CockroachDB does not support nested transactions (subtransactions) or named savepoints (see [known limitations](known-limitations.html)), both of which are necessary for `Session.flush()` to work properly.  If `Session.flush()` encounters an error and aborts, it will try to rollback, which will not be allowed by CockroachDB and result in an error message that looks like the following:
-
-    ~~~
-    sqlalchemy.orm.exc.DetachedInstanceError: Instance <FooModel at 0x12345678> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: http://sqlalche.me/e/bhk3)
-    ~~~
-
-- **DO** prefer to use the query-builder side of SQLAlchemy over the Session/ORM side if at all possible.  There is a lot of hairy magic in Sessions that will make debugging your interactions with CockroachDB harder than if you build queries and pass them to [`Engine.execute()`](XXX), for example.  Of course, this may not be possible, in which case your application code should work as expected provided you follow the guidance given here.  This will provide the added benefit of keeping your application code portable across different databases.  For example, the sample code given on this page works identically when run against Postgres.
-
-- XXX something something txn too large errors
+It does all of the above using the practices we recommend for using SQLAlchemy with the CockroachDB dialect, which are listed in the [Implementation considerations](#implementation-considerations) section below the code.
 
 {{site.data.alerts.callout_info}}
 Use the `cockroachdb://` prefix in the URL passed to [`sqlalchemy.create_engine()`](XXX) to cause the [`cockroachdb-python` dialect](https://github.com/cockroachdb/cockroachdb-python") to be used. Using the `postgres://` URL prefix to connect to your CockroachDB cluster will not work.
 {{site.data.alerts.end}}
+
+XXX: UPDATE CODE SAMPLES
 
 Copy the code from below or
 <a href="https://raw.githubusercontent.com/cockroachdb/docs/master/_includes/v2.2/app/sqlalchemy-basic-sample.py">download it directly</a>.
@@ -141,12 +126,21 @@ Then, issue the following statement:
 
 ## Step 3. Run the Python code
 
-The following code uses the [SQLAlchemy ORM](https://docs.sqlalchemy.org/en/latest/) to map Python-specific objects to SQL operations. Specifically, `Base.metadata.create_all(engine)` creates an `accounts` table based on the Account class, `session.add_all([Account(),...
-])` inserts rows into the table, and `session.query(Account)` selects from the table so that balances can be printed.
+The code below uses the [SQLAlchemy ORM](https://docs.sqlalchemy.org/en/latest/) to map Python objects and methods to SQL operations.  Specifically, it:
+
+1. Read in existing account IDs (if any) from the "bank" database.
+2. Create additional accounts with randomly generated IDs.  Then, add a randomly generated amount of money to each new account.
+3. Choose two accounts at random from the list of accounts and take half of the money from the first and deposit it into the second.
+
+You can run this script as many times as you want; on each run, it will create some new accounts and shuffle some money around between accounts.  (This is why Step 1 needs to check for existing account IDs to avoid collisions.)
+
+It does all of the above using the practices we recommend for using SQLAlchemy with the CockroachDB dialect, which are listed in the [Implementation considerations](#implementation-considerations) section below the code.
 
 {{site.data.alerts.callout_info}}
-The <a href="https://github.com/cockroachdb/cockroachdb-python">cockroachdb python package</a> installed earlier is triggered by the <code>cockroachdb://</code> prefix in the engine URL. Using <code>postgres://</code> to connect to your cluster will not work.
+Use the `cockroachdb://` prefix in the URL passed to [`sqlalchemy.create_engine()`](XXX) to cause the [`cockroachdb-python` dialect](https://github.com/cockroachdb/cockroachdb-python") to be used. Using the `postgres://` URL prefix to connect to your CockroachDB cluster will not work.
 {{site.data.alerts.end}}
+
+XXX: UPDATE CODE SAMPLES
 
 Copy the code or
 <a href="https://raw.githubusercontent.com/cockroachdb/docs/master/_includes/v2.2/app/insecure/sqlalchemy-basic-sample.py" download>download it directly</a>.
@@ -195,6 +189,32 @@ Then, issue the following statement:
 ~~~
 
 </section>
+
+## Implementation considerations
+
+- **DO** use the [`sqlalchemy.run_transaction`](https://github.com/cockroachdb/cockroachdb-python/blob/master/cockroachdb/sqlalchemy/transaction.py) method defined by the CockroachDB dialect as shown in the code sample above.  This abstracts the details of [transaction retries](transactions.html#transaction-retries) away from your application code. Transaction retries are more frequent in CockroachDB than in some other databases because we use [optimistic concurrency control](https://en.wikipedia.org/wiki/Optimistic_concurrency_control) rather than locking.  Because of this, a CockroachDB transaction may have to be tried more than once before it can commit.  This is part of how we ensure that transaction ordering adheres to the ANSI [SERIALIZABLE](https://en.wikipedia.org/wiki/Isolation_(database_systems)#Serializable) isolation level.  In addition, using `run_transaction` has the following benefits:
+  - It protects you from accidentally reusing objects via the [Session](https://docs.sqlalchemy.org/en/latest/orm/session.html) from outside the transaction.
+  - It abstracts away the retry logic from your application, and keeps your application code portable across different databases.  For example, the sample code given on this page works identically when run against Postgres.
+  - It will run your transactions to completion much faster than a naive implementation that created a fresh transaction after every retry error.  Because of the way the CockroachDB dialect's driver structures the transaction attempts (using a [SAVEPOINT](savepoint.html) statement under the hood, which has a slightly different meaning in CockroachDB than in some other databases), the server is able to preserve some information about the previously attempted transactions to allow subsequent retries to complete more easily.  It couldn't do this if the retries were independent top-level transactions.
+
+- **DO** follow the recommendations of the [SQLAlchemy FAQs](https://docs.sqlalchemy.org/en/latest/orm/session_basics.html#session-frequently-asked-questions), which affirm the previous point by stating (among other things) that
+    > As a general rule, the application should manage the lifecycle of the session externally to functions that deal with specific data. This is a fundamental separation of concerns which keeps data-specific operations agnostic of the context in which they access and manipulate that data ... keep the lifecycle of the session (and usually the transaction) separate and external
+
+- **DO NOT** do any explicit munging of the transaction state inside the callback function passed to `run_transaction`
+
+- **DO NOT** make calls to [`Session.flush()`][session.flush] inside `run_transaction`.  This does not work as expected with CockroachDB because CockroachDB does not support nested transactions (subtransactions) or named savepoints (see [known limitations](known-limitations.html)), both of which are necessary for `Session.flush()` to work properly.  If `Session.flush()` encounters an error and aborts, it will try to rollback, which will not be allowed by CockroachDB and result in an error message that looks like the following:
+
+    ~~~
+    sqlalchemy.orm.exc.DetachedInstanceError: Instance <FooModel at 0x12345678> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: http://sqlalche.me/e/bhk3)
+    ~~~
+
+- **DO** prefer to use the query-builder side of SQLAlchemy over the Session/ORM side if at all possible.  There is a lot of hairy magic in Sessions that will make debugging your interactions with CockroachDB harder than if you build queries and pass them to [`Engine.execute()`](XXX), for example.  Of course, this may not be possible, in which case your application code should work as expected provided you follow the guidance given here.  
+
+- If you see an error like `psycopg2.InternalError: transaction is too large to complete; try splitting into pieces`, you are trying to commit too much data in a single transaction.  As described in our XXX docs, the size limit for transactions is 256 KiB.  A pattern that works for inserting large numbers of objects while still using `run_transaction` to handle retries automatically for you is as follows:
+
+~~~ python
+
+~~~
 
 ## What's next?
 
